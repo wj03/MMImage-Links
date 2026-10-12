@@ -9,7 +9,7 @@
     "dev": "vite",
     "compile": "tsc -b && vite build",
     "build": "npm run build:desktop",
-    "build:desktop": "tsc -b && vite build --config vite.config.desktop.ts && electron-builder",
+    "build:desktop": "tsc -b && vite build --config vite.config.desktop.ts && electron-builder --publish never",
     "preview": "vite preview"
   },
   "dependencies": {
