@@ -1,0 +1,116 @@
+name: Build and publish installers
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version tag, for example v1.0.0
+        required: true
+        default: v1.0.0
+
+permissions:
+  contents: write
+
+env:
+  APP_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Set package version
+        shell: bash
+        run: npm version "${APP_VERSION#v}" --no-git-tag-version --allow-same-version
+      - run: npm run build:desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: release/**/*.exe
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - name: Set package version
+        run: npm version "${APP_VERSION#v}" --no-git-tag-version --allow-same-version
+      - run: npm run compile
+      - run: npx cap add android
+      - run: npx cap sync android
+      - name: Build installable APK
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          path = Path('android/app/build.gradle')
+          source = path.read_text()
+          source = source.replace('release {\n            minifyEnabled', 'release {\n            signingConfig signingConfigs.debug\n            minifyEnabled')
+          source = source.replace('versionCode 1', f"versionCode {os.environ['GITHUB_RUN_NUMBER']}")
+          source = source.replace('versionName "1.0"', f"versionName \"{os.environ['APP_VERSION'].removeprefix('v')}\"")
+          path.write_text(source)
+          PY
+          cd android
+          ./gradlew assembleRelease
+          cd ..
+          cp android/app/build/outputs/apk/release/app-release.apk "MMImage-${APP_VERSION#v}-android.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: '*.apk'
+
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Set package version
+        run: npm version "${APP_VERSION#v}" --no-git-tag-version --allow-same-version
+      - run: npm run compile
+      - run: npx cap add ios
+      - run: npx cap sync ios
+      - name: Build unsigned iOS IPA
+        run: |
+          xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -archivePath build/MMImage.xcarchive MARKETING_VERSION="${APP_VERSION#v}" CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" CODE_SIGNING_ALLOWED=NO archive
+          mkdir -p build/Payload
+          cp -R build/MMImage.xcarchive/Products/Applications/App.app build/Payload/App.app
+          cd build
+          zip -qr "MMImage-${APP_VERSION#v}-ios-unsigned.ipa" Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: build/*.ipa
+
+  release:
+    needs: [windows, android, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.APP_VERSION }}
+          name: MMImage Links ${{ env.APP_VERSION }}
+          generate_release_notes: true
+          files: assets/*
