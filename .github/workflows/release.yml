@@ -30,10 +30,17 @@ jobs:
         shell: bash
         run: npm version "${APP_VERSION#v}" --no-git-tag-version --allow-same-version
       - run: npm run build:desktop
+      - name: Stage Windows installer
+        shell: pwsh
+        run: |
+          $version = $env:APP_VERSION.TrimStart('v')
+          $source = "release/$version/MMImage Links-Windows-$version-Setup.exe"
+          if (-not (Test-Path -LiteralPath $source)) { throw "Installer not found: $source" }
+          Copy-Item -LiteralPath $source -Destination "MMImage-$version-Windows-Setup.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: release/**/*.exe
+          path: MMImage-*-Windows-Setup.exe
 
   android:
     runs-on: ubuntu-latest
